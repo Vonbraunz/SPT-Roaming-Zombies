@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "dgSpecHash": "zblAqqYeaP8=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Odin\\Desktop\\CS Projects\\Zombie mod\\ZombieHorde\\Server\\ZombieHorde.Server.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Odin\\.nuget\\packages\\fastcloner\\3.3.16\\fastcloner.3.3.16.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\jetbrains.annotations\\2025.2.2\\jetbrains.annotations.2025.2.2.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.authorization\\9.0.1\\microsoft.aspnetcore.authorization.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.components\\9.0.1\\microsoft.aspnetcore.components.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.components.analyzers\\9.0.1\\microsoft.aspnetcore.components.analyzers.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.components.forms\\9.0.1\\microsoft.aspnetcore.components.forms.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.components.web\\9.0.1\\microsoft.aspnetcore.components.web.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.aspnetcore.metadata\\9.0.1\\microsoft.aspnetcore.metadata.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\9.0.1\\microsoft.extensions.dependencyinjection.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\9.0.9\\microsoft.extensions.dependencyinjection.abstractions.9.0.9.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.localization\\9.0.1\\microsoft.extensions.localization.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.localization.abstractions\\9.0.1\\microsoft.extensions.localization.abstractions.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\9.0.1\\microsoft.extensions.logging.abstractions.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.options\\9.0.1\\microsoft.extensions.options.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.extensions.primitives\\9.0.1\\microsoft.extensions.primitives.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\microsoft.jsinterop\\9.0.1\\microsoft.jsinterop.9.0.1.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\mudblazor\\8.13.0\\mudblazor.8.13.0.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\semanticversioning\\3.0.0\\semanticversioning.3.0.0.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\sptarkov.common\\4.0.13\\sptarkov.common.4.0.13.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\sptarkov.di\\4.0.13\\sptarkov.di.4.0.13.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\sptarkov.server.core\\4.0.13\\sptarkov.server.core.4.0.13.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\sptarkov.server.web\\4.0.13\\sptarkov.server.web.4.0.13.nupkg.sha512",
+    "C:\\Users\\Odin\\.nuget\\packages\\system.io.hashing\\9.0.9\\system.io.hashing.9.0.9.nupkg.sha512"
+  ],
+  "logs": []
+}

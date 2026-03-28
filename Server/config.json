@@ -1,0 +1,21 @@
+{
+  "hordeSize": {
+    "min": 2,
+    "max": 4
+  },
+  "spawnDelaySeconds": 120,
+  "spawnChance": {
+    "bigmap": 70,
+    "factory4_night": 100,
+    "interchange": 70,
+    "laboratory": 50,
+    "lighthouse": 70,
+    "rezervbase": 70,
+    "sandbox": 50,
+    "sandbox_high": 50,
+    "shoreline": 70,
+    "tarkovstreets": 80,
+    "woods": 70,
+    "labyrinth": 60
+  }
+}
