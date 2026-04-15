@@ -9,10 +9,13 @@ A server + client mod for [SPT](https://www.sp-tarkov.com/) that spawns mixed ho
 - Spawns a mixed horde of `infectedAssault`, `infectedPmc`, `infectedCivil`, and `infectedLaborant` bots
 - **Night raids only** (22:00 – 06:00 in-game time) — daytime raids are unaffected
 - **One horde per raid** — spawns once on a timer, never again
+- **Persists across raids** — horde spawn data is re-injected after each session ends
+- Zombies deal melee damage on proximity (35 HP/hit, 1.5 s cooldown, 4 m range)
 - Configurable spawn chance, horde size, and spawn delay per map
 - HUD notification when the horde arrives: *"The dead are rising..."*
 - Optional custom alert sound (`horde_alert.ogg` / `.wav`)
 - SPT Forge compatible — version-checked against SPT automatically
+- **No extra mod dependencies required**
 
 ---
 
@@ -26,7 +29,7 @@ A server + client mod for [SPT](https://www.sp-tarkov.com/) that spawns mixed ho
 
 ## Installation
 
-1. Download the latest release ZIP from [SPT Forge](#) or the [Releases](../../releases) page
+1. Download the latest release ZIP from the [Releases](../../releases) page
 2. Extract the ZIP into your SPT root folder — files will drop into the correct locations automatically:
 
 ```
@@ -109,9 +112,23 @@ The sound plays for the local player when the first zombie of the horde is detec
 
 ## How It Works
 
-- **Server side:** At startup, injects `BossLocationSpawn` entries for all four infected bot types into each map's spawn data, using the map's real bot zones
+- **Server side:** At startup, injects `BossLocationSpawn` entries for all four infected bot types into each map's spawn data using the map's real bot zones. After each raid ends (`/client/match/local/end`), spawn data is re-injected so zombies appear in every subsequent raid
 - **Client side:** On raid start, checks `GameWorld.GameDateTime.Calculate().Hour` — if it's daytime (06:00–22:00), zombie entries are stripped before `BossSpawnScenario` processes them
+- **Melee damage:** `ZombieSpawnDetector` tracks all live zombie bots each frame. When one closes within 4 m of the player it applies damage directly to the health controller via reflection (`ApplyDamage` on `ActiveHealthController`), on a per-zombie cooldown
 - **Detection:** Subscribes to `GameWorld.OnPersonAdd` — when the first infected bot appears, fires the HUD notification and plays the alert sound (once per raid)
+
+---
+
+## Changelog
+
+### v1.1.0
+- Fixed zombie melee damage (reflection field-matching bug — `DamageType` was found before `Damage`)
+- Fixed horde persistence across raids (BPS spawn wipe after session end)
+- Fixed infected bot faction (`EPlayerSide.Savage` now correctly forced at spawn)
+- Removed BigBrain dependency — no extra mods required
+
+### v1.0.0
+- Initial release
 
 ---
 
