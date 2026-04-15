@@ -27,15 +27,17 @@ public record ZombieHordeMetadata : AbstractModMetadata, IModWebMetadata
     public override string License { get; init; } = "MIT";
 }
 
-[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 100)]
-public class ZombieHordeServer(
-    ISptLogger<ZombieHordeServer> logger,
+/// <summary>
+/// Singleton service that owns the loaded config and can re-inject zombie
+/// BossLocationSpawn entries on demand — called at startup and after each raid end.
+/// </summary>
+[Injectable(InjectionType = InjectionType.Singleton)]
+public class ZombieSpawnService(
+    ISptLogger<ZombieSpawnService> logger,
     DatabaseService databaseService,
-    ModHelper modHelper,
-    RandomUtil randomUtil,
-    JsonUtil jsonUtil) : IOnLoad
+    RandomUtil randomUtil)
 {
-    private static readonly Dictionary<string, string> MapZones = new()
+    public static readonly Dictionary<string, string> MapZones = new()
     {
         ["bigmap"]         = "ZoneDormitory,ZoneGasStation,ZoneScavBase,ZoneBrige,ZoneCustoms,ZoneOldVill",
         ["factory4_night"] = "BotZone",
@@ -51,8 +53,6 @@ public class ZombieHordeServer(
         ["labyrinth"]      = "BotZone"
     };
 
-    // Zombie types spawned as separate independent waves — all fire at the same time
-    // so they arrive together as a mixed horde. Avoids BossSupport serialization issues.
     private static readonly string[] ZombieTypes =
     [
         "infectedAssault",
@@ -61,13 +61,82 @@ public class ZombieHordeServer(
         "infectedLaborant"
     ];
 
-    private static readonly List<string> ValidMaps = [.. MapZones.Keys];
+    private ZombieHordeConfig? _config;
 
+    public void Initialize(ZombieHordeConfig config)
+    {
+        _config = config;
+    }
+
+    public void InjectSpawns()
+    {
+        if (_config == null)
+        {
+            logger.Warning("[RoamingZombies] InjectSpawns called before config was loaded — skipping");
+            return;
+        }
+
+        var locations = databaseService.GetLocations();
+        var locationDict = locations.GetDictionary();
+        var totalMaps = 0;
+
+        foreach (var (map, zone) in MapZones)
+        {
+            if (!_config.SpawnChance.TryGetValue(map, out var chance))
+                continue;
+
+            var actualKey = locations.GetMappedKey(map);
+            if (!locationDict.TryGetValue(actualKey, out var location))
+                continue;
+
+            foreach (var zombieType in ZombieTypes)
+            {
+                var count = randomUtil.GetInt(_config.HordeSize.Min, _config.HordeSize.Max + 1);
+
+                location.Base.BossLocationSpawn.Add(new BossLocationSpawn
+                {
+                    BossName             = zombieType,
+                    BossChance           = chance,
+                    BossDifficulty       = "normal",
+                    BossEscortType       = zombieType,
+                    BossEscortAmount     = count.ToString(),
+                    BossEscortDifficulty = "normal",
+                    BossZone             = zone,
+                    Delay                = 0,
+                    DependKarma          = false,
+                    DependKarmaPVE       = false,
+                    ForceSpawn           = false,
+                    IgnoreMaxBots        = _config.IgnoreMaxBots,
+                    SpawnMode            = ["regular", "pve"],
+                    Supports             = null!,
+                    Time                 = _config.SpawnDelaySeconds,
+                    TriggerId            = "",
+                    TriggerName          = ""
+                });
+            }
+
+            totalMaps++;
+        }
+
+        logger.Info($"[RoamingZombies] Zombie spawns injected into {totalMaps} maps");
+    }
+}
+
+/// <summary>
+/// IOnLoad — loads config and does the initial spawn injection.
+/// Priority > BPS (PostDBModLoader + 69420) so we run after BPS's startup wipe.
+/// </summary>
+[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 70000)]
+public class ZombieHordeServer(
+    ISptLogger<ZombieHordeServer> logger,
+    ZombieSpawnService spawnService,
+    ModHelper modHelper,
+    JsonUtil jsonUtil) : IOnLoad
+{
     public async Task OnLoad()
     {
-        var modPath = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
-        var configPath = Path.Combine(modPath, "config.json");
-        var config = await jsonUtil.DeserializeFromFileAsync<ZombieHordeConfig>(configPath);
+        var modPath  = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
+        var config   = await jsonUtil.DeserializeFromFileAsync<ZombieHordeConfig>(Path.Combine(modPath, "config.json"));
 
         if (config == null)
         {
@@ -75,58 +144,32 @@ public class ZombieHordeServer(
             return;
         }
 
-        var locations = databaseService.GetLocations();
-        var locationDict = locations.GetDictionary();
-
-        foreach (var map in ValidMaps)
-        {
-            if (!config.SpawnChance.TryGetValue(map, out var chance))
-                continue;
-
-            var actualKey = locations.GetMappedKey(map);
-            if (!locationDict.TryGetValue(actualKey, out var location))
-            {
-                logger.Warning($"[RoamingZombies] Map '{map}' not found in locations");
-                continue;
-            }
-
-            var zone = MapZones[map];
-            var totalSpawned = 0;
-
-            foreach (var zombieType in ZombieTypes)
-            {
-                var count = randomUtil.GetInt(config.HordeSize.Min, config.HordeSize.Max + 1);
-
-                location.Base.BossLocationSpawn.Add(new BossLocationSpawn
-                {
-                    BossName = zombieType,
-                    BossChance = chance,
-                    BossDifficulty = "normal",
-                    BossEscortType = zombieType,
-                    BossEscortAmount = count.ToString(),
-                    BossEscortDifficulty = "normal",
-                    BossZone = zone,
-                    Delay = 0,
-                    DependKarma = false,
-                    DependKarmaPVE = false,
-                    ForceSpawn = false,
-                    IgnoreMaxBots = true,
-                    SpawnMode = ["regular", "pve"],
-                    Supports = null!,
-                    Time = config.SpawnDelaySeconds,
-                    TriggerId = "",
-                    TriggerName = ""
-                });
-
-                totalSpawned += count;
-            }
-
-            logger.Info($"[RoamingZombies] {map}: ~{totalSpawned} zombies across {ZombieTypes.Length} types, {chance}% chance, {config.SpawnDelaySeconds}s delay");
-        }
-
-        logger.Info("[RoamingZombies] Zombie spawns injected into all valid maps");
+        spawnService.Initialize(config);
+        spawnService.InjectSpawns();
     }
 }
+
+/// <summary>
+/// Re-injects zombie spawns after every raid end.
+/// BPS hooks /client/match/local/end and wipes ALL BossLocationSpawn entries before
+/// rebuilding its own. Because alphabetical order puts _botplacementsystem before
+/// ZombieHorde at equal TypePriority, BPS's handler fires first — our handler fires
+/// second, after the wipe, and puts the zombies back.
+/// </summary>
+[Injectable]
+public class ZombieHordeRouter(ZombieSpawnService spawnService, JsonUtil jsonUtil)
+    : StaticRouter(
+        jsonUtil,
+        [
+            new RouteAction(
+                "/client/match/local/end",
+                async (url, info, sessionId, output) =>
+                {
+                    spawnService.InjectSpawns();
+                    return output;
+                })
+        ])
+{ }
 
 public record ZombieHordeConfig
 {
@@ -138,6 +181,9 @@ public record ZombieHordeConfig
 
     [JsonPropertyName("spawnChance")]
     public required Dictionary<string, int> SpawnChance { get; set; }
+
+    [JsonPropertyName("ignoreMaxBots")]
+    public bool IgnoreMaxBots { get; set; } = true;
 }
 
 public record HordeSizeConfig

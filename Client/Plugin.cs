@@ -1,16 +1,23 @@
 using BepInEx;
+using BepInEx.Logging;
 using ZombieHorde.Client.Patches;
 
 namespace ZombieHorde.Client
 {
-    [BepInPlugin("com.vonbraunz.roamingzombies", "Roaming Zombies", "1.0.0")]
+    [BepInPlugin("com.vonbraunz.roamingzombies", "Roaming Zombies", "1.1.0")]
     public class Plugin : BaseUnityPlugin
     {
+        public static ManualLogSource Log;
+
         private void Awake()
         {
+            Log = Logger;
+
             new NightCheckPatch().Enable();
             new RaidStartPatch().Enable();
-            Logger.LogInfo("[RoamingZombies] Client plugin loaded — night-only filter + horde detection active");
+            new InfectedSidePatch().Enable();
+
+            Logger.LogInfo("[RoamingZombies] Client loaded — patches active");
         }
     }
 }
