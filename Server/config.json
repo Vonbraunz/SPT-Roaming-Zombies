@@ -4,7 +4,8 @@
     "max": 4
   },
   "ignoreMaxBots": true,
-  "spawnDelaySeconds": 120,
+  "alwaysSpawn": false,
+  "spawnDelaySeconds": 30,
   "spawnChance": {
     "bigmap": 100,
     "factory4_night": 100,

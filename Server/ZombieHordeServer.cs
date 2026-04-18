@@ -18,7 +18,7 @@ public record ZombieHordeMetadata : AbstractModMetadata, IModWebMetadata
     public override string Name { get; init; } = "Roaming Zombies";
     public override string Author { get; init; } = "DrBraun";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.0.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.1.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
@@ -85,6 +85,16 @@ public class ZombieSpawnService(
             if (!_config.SpawnChance.TryGetValue(map, out var chance))
                 continue;
 
+            // Roll dice server-side so the percentage actually works.
+            // alwaysSpawn bypasses the roll entirely and forces spawns.
+            if (!_config.AlwaysSpawn)
+            {
+                if (chance <= 0)
+                    continue;
+                if (chance < 100 && randomUtil.GetInt(1, 101) > chance)
+                    continue;
+            }
+
             var actualKey = locations.GetMappedKey(map);
             if (!locationDict.TryGetValue(actualKey, out var location))
                 continue;
@@ -96,7 +106,7 @@ public class ZombieSpawnService(
                 location.Base.BossLocationSpawn.Add(new BossLocationSpawn
                 {
                     BossName             = zombieType,
-                    BossChance           = chance,
+                    BossChance           = 100,
                     BossDifficulty       = "normal",
                     BossEscortType       = zombieType,
                     BossEscortAmount     = count.ToString(),
@@ -105,9 +115,9 @@ public class ZombieSpawnService(
                     Delay                = 0,
                     DependKarma          = false,
                     DependKarmaPVE       = false,
-                    ForceSpawn           = false,
+                    ForceSpawn           = _config.AlwaysSpawn,
                     IgnoreMaxBots        = _config.IgnoreMaxBots,
-                    SpawnMode            = ["regular", "pve"],
+                    SpawnMode            = null,
                     Supports             = null!,
                     Time                 = _config.SpawnDelaySeconds,
                     TriggerId            = "",
@@ -184,6 +194,13 @@ public record ZombieHordeConfig
 
     [JsonPropertyName("ignoreMaxBots")]
     public bool IgnoreMaxBots { get; set; } = true;
+
+    /// <summary>
+    /// When true, zombies always spawn on every raid regardless of spawnChance.
+    /// Also sets ForceSpawn=true to bypass bot limits.
+    /// </summary>
+    [JsonPropertyName("alwaysSpawn")]
+    public bool AlwaysSpawn { get; set; } = false;
 }
 
 public record HordeSizeConfig
