@@ -6,6 +6,7 @@ release/
 # Visual Studio
 .vs/
 *.user
+**/Properties/launchSettings.json
 
 # OS
 Thumbs.db
