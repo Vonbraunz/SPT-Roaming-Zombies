@@ -21,10 +21,6 @@ namespace ZombieHorde.Client
             "infectedLaborant"
         };
 
-        private const float MeleeRange    = 2.0f;
-        private const float MeleeDamage   = 5f;
-        private const float MeleeCooldown = 1.5f;
-
         private GameWorld _gameWorld;
         private bool      _hordeDetected;
         private AudioClip _hordeClip;
@@ -107,28 +103,34 @@ namespace ZombieHorde.Client
                 Plugin.Log.LogInfo($"[RoamingZombies] Nearest zombie: {minDist:F1}m ({_zombies.Count} tracked)");
             }
 
+            if (!Plugin.EnableMeleeDamage.Value) return;
+
+            var meleeRange    = Plugin.MeleeRange.Value;
+            var meleeDamage   = Plugin.MeleeDamage.Value;
+            var meleeCooldown = Plugin.MeleeCooldown.Value;
+
             foreach (var zombie in _zombies)
             {
                 float dist = Vector3.Distance(zombie.Transform.position, main.Transform.position);
-                if (dist > MeleeRange) continue;
+                if (dist > meleeRange) continue;
 
                 float now = Time.time;
                 if (_nextAttack.TryGetValue(zombie, out float next) && now < next) continue;
-                _nextAttack[zombie] = now + MeleeCooldown;
+                _nextAttack[zombie] = now + meleeCooldown;
 
-                Plugin.Log.LogInfo($"[RoamingZombies] Melee hit ({dist:F1}m) — {MeleeDamage} dmg");
-                ApplyMeleeDamage(zombie, main);
+                Plugin.Log.LogInfo($"[RoamingZombies] Melee hit ({dist:F1}m) — {meleeDamage} dmg");
+                ApplyMeleeDamage(zombie, main, meleeDamage);
             }
         }
 
-        private static void ApplyMeleeDamage(Player attacker, Player victim)
+        private static void ApplyMeleeDamage(Player attacker, Player victim, float damage)
         {
             try
             {
                 if (!EnsureReflection(victim)) return;
 
                 var damageInfo = Activator.CreateInstance(_damageInfoType);
-                _fiDamage?.SetValue(damageInfo, MeleeDamage);
+                _fiDamage?.SetValue(damageInfo, damage);
                 _fiDamageType?.SetValue(damageInfo, _meleeEnumValue);
 
                 if (_fiPlayer != null && _fiPlayer.FieldType.IsInstanceOfType(attacker))
@@ -138,7 +140,7 @@ namespace ZombieHorde.Client
                     _fiDirection.SetValue(damageInfo, (victim.Transform.position - attacker.Transform.position).normalized);
 
                 var bodyPart = BodyParts[UnityEngine.Random.Range(0, BodyParts.Length)];
-                _applyDamageMethod.Invoke(victim.ActiveHealthController, new[] { (object)bodyPart, MeleeDamage, damageInfo });
+                _applyDamageMethod.Invoke(victim.ActiveHealthController, new[] { (object)bodyPart, damage, damageInfo });
             }
             catch (Exception ex)
             {
@@ -229,12 +231,14 @@ namespace ZombieHorde.Client
 
         private void OnHordeSpawned()
         {
-            NotificationManagerClass.DisplayMessageNotification(
-                "The dead are rising... zombies have been spotted nearby.",
-                ENotificationDurationType.Long);
+            if (Plugin.EnableHordeNotification.Value)
+            {
+                NotificationManagerClass.DisplayMessageNotification(
+                    "The dead are rising... zombies have been spotted nearby.",
+                    ENotificationDurationType.Long);
+            }
 
-            if (_hordeClip != null) PlayClip(_hordeClip);
-            else Plugin.Log.LogWarning("[RoamingZombies] No custom audio clip loaded — notification only");
+            if (Plugin.EnableHordeAudio.Value && _hordeClip != null) PlayClip(_hordeClip);
         }
 
         private void PlayClip(AudioClip clip)
