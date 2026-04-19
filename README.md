@@ -6,7 +6,7 @@
 
 [Download v1.2.0](../../releases) · [Changelog](#changelog) · [Fika + ABPS compatible](#compatibility)
 
-> ### ⚠️ We cannot stress this enough — zombies are a real challenge now
+> ### ⚠️ I cannot stress this enough — zombies are a real challenge now
 >
 > Previous versions had zombies that shuffled around harmlessly. **v1.2.0 is a different mod.** Melee zombies actively hunt you, face you before each swing, and chain knife attacks at 1-second intervals. Pistol zombies engage from 15 m with real aim. A horde on Labs or night Factory can absolutely wipe you if you're not paying attention. **Plan your raid, bring ammo, watch your six.**
 
@@ -14,7 +14,7 @@
 
 ## What's new in v1.2.0
 
-**Zombies are an actual threat now. We cannot stress this enough.** Previous versions spawned infected bots that shambled around and couldn't fight back — a bizarre touch-damage effect was the only way they could hurt you. Not anymore. Expect to die if you don't respect the horde.
+**Zombies are an actual threat now. I cannot stress this enough.** Previous versions spawned infected bots that shambled around and couldn't fight back — a bizarre touch-damage effect was the only way they could hurt you. Not anymore. Expect to die if you don't respect the horde.
 
 ### Melee zombies
 - **Actively hunt the player.** They pathfind toward you and face you before each swing so the hit actually lands.
