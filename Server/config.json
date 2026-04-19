@@ -3,21 +3,25 @@
     "min": 2,
     "max": 4
   },
+  "pistolHordeSize": {
+    "min": 1,
+    "max": 2
+  },
   "ignoreMaxBots": true,
   "alwaysSpawn": false,
   "spawnDelaySeconds": 120,
   "spawnChance": {
-    "bigmap": 100,
+    "bigmap": 70,
     "factory4_night": 100,
-    "interchange": 100,
+    "interchange": 75,
     "laboratory": 100,
-    "lighthouse": 100,
-    "rezervbase": 100,
-    "sandbox": 100,
-    "sandbox_high": 100,
-    "shoreline": 100,
-    "tarkovstreets": 100,
-    "woods": 100,
-    "labyrinth": 100
+    "lighthouse": 40,
+    "rezervbase": 65,
+    "sandbox": 65,
+    "sandbox_high": 65,
+    "shoreline": 35,
+    "tarkovstreets": 80,
+    "woods": 30,
+    "labyrinth": 80
   }
 }

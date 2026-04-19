@@ -11,6 +11,19 @@ using UnityEngine.Networking;
 
 namespace ZombieHorde.Client
 {
+    /// <summary>
+    /// Per-raid component that:
+    ///   1. Tracks spawned infected bots
+    ///   2. Drives melee zombies (those with a KnifeController) toward the player —
+    ///      bypasses the native RunToEnemyUpdate path check, which fails reliably in
+    ///      this EFT version and prevents infected brains from pursuing combatively
+    ///   3. Triggers KnifeController.MakeKnifeKick() at close range so zombies actually
+    ///      swing — the native combat layer returns the decision but nothing downstream
+    ///      acts on it
+    ///   4. Shows a HUD notification + plays a horde alert audio clip on first spawn
+    /// Pistol zombies (BotDifficulty=hard / EZombieMode.Shooting) are left alone —
+    /// they route through EFT's standard shoot AI and engage the player natively.
+    /// </summary>
     public class ZombieSpawnDetector : MonoBehaviour
     {
         private static readonly HashSet<string> ZombieTypes = new HashSet<string>
@@ -21,28 +34,30 @@ namespace ZombieHorde.Client
             "infectedLaborant"
         };
 
+        // Melee attack tuning
+        private const float MeleeRange         = 4f;     // call MakeKnifeKick within this distance
+        private const float SwingCooldown      = 1.0f;   // per-zombie seconds between swings
+        private const float PursuitMinRange    = 4f;     // no pursuit when already in melee range
+        private const float PursuitMaxRange    = 40f;    // stop pursuing beyond this
+        private const float PursuitRepathEvery = 1.5f;   // per-zombie seconds between re-path calls
+
         private GameWorld _gameWorld;
         private bool      _hordeDetected;
         private AudioClip _hordeClip;
 
         private readonly List<Player>              _zombies    = new List<Player>();
-        private readonly Dictionary<Player, float> _nextAttack = new Dictionary<Player, float>();
-        private float _nextDistLog;
+        private readonly Dictionary<Player, float> _nextSwing  = new Dictionary<Player, float>();
+        private readonly Dictionary<Player, float> _nextRepath = new Dictionary<Player, float>();
 
-        // Reflection cache for ApplyDamage
-        private static MethodInfo _applyDamageMethod;
-        private static Type       _damageInfoType;
-        private static FieldInfo  _fiDamage;
-        private static FieldInfo  _fiDamageType;
-        private static FieldInfo  _fiPlayer;
-        private static FieldInfo  _fiDirection;
-        private static object     _meleeEnumValue;
-        private static bool       _reflectionReady;
-
-        private static readonly EBodyPart[] BodyParts =
-        {
-            EBodyPart.Chest, EBodyPart.Head, EBodyPart.LeftArm, EBodyPart.RightArm
-        };
+        // Reflection cache — resolved once on first use against EFT's obfuscated API surface
+        private static bool       _reflectionResolved;
+        private static MethodInfo _makeKnifeKickMethod;
+        private static MethodInfo _goToPointMethod;
+        private static MethodInfo _lookToPointMethod;
+        private static PropertyInfo _weaponManagerProp;
+        private static PropertyInfo _meleeDataProp;
+        private static PropertyInfo _knifeControllerProp;
+        private static PropertyInfo _steeringProp;
 
         public static void Init()
         {
@@ -55,7 +70,6 @@ namespace ZombieHorde.Client
             _gameWorld     = Singleton<GameWorld>.Instance;
             _hordeDetected = false;
 
-            Plugin.Log.LogInfo("[RoamingZombies] ZombieSpawnDetector started — subscribing to OnPersonAdd");
             _gameWorld.OnPersonAdd += OnPersonAdd;
 
             foreach (var player in _gameWorld.AllAlivePlayersList)
@@ -71,9 +85,7 @@ namespace ZombieHorde.Client
             if (player == null || player.IsYourPlayer) return;
 
             var role = player.Profile?.Info?.Settings?.Role;
-            Plugin.Log.LogInfo($"[RoamingZombies] CheckPlayer: {player.name} role={role}");
-            if (role == null) return;
-            if (!ZombieTypes.Contains(role.ToString())) return;
+            if (role == null || !ZombieTypes.Contains(role.ToString())) return;
 
             FixInfectedSide(player);
 
@@ -89,117 +101,212 @@ namespace ZombieHorde.Client
 
         private void Update()
         {
-            var main = _gameWorld?.MainPlayer;
-            if (main == null || !main.HealthController.IsAlive) return;
+            if (_gameWorld == null) return;
 
             _zombies.RemoveAll(z => z == null || !z.HealthController.IsAlive);
+            if (_zombies.Count == 0) return;
 
-            if (Time.time >= _nextDistLog && _zombies.Count > 0)
+            // Gather live human players. On Fika headless there's no MainPlayer (no local
+            // human), but remote players still appear in AllAlivePlayersList. On solo SPT
+            // and Fika host there's a MainPlayer but we want to target the closest human
+            // per zombie rather than assuming MainPlayer is the only target.
+            var humans = _humans;
+            humans.Clear();
+            foreach (var p in _gameWorld.AllAlivePlayersList)
             {
-                _nextDistLog = Time.time + 3f;
-                float minDist = float.MaxValue;
-                foreach (var z in _zombies)
-                    minDist = Mathf.Min(minDist, Vector3.Distance(z.Transform.position, main.Transform.position));
-                Plugin.Log.LogInfo($"[RoamingZombies] Nearest zombie: {minDist:F1}m ({_zombies.Count} tracked)");
+                if (p is Player player && !player.IsAI
+                    && player.HealthController != null && player.HealthController.IsAlive)
+                {
+                    humans.Add(player);
+                }
             }
-
-            if (!Plugin.EnableMeleeDamage.Value) return;
-
-            var meleeRange    = Plugin.MeleeRange.Value;
-            var meleeDamage   = Plugin.MeleeDamage.Value;
-            var meleeCooldown = Plugin.MeleeCooldown.Value;
+            if (humans.Count == 0) return;
 
             foreach (var zombie in _zombies)
             {
-                float dist = Vector3.Distance(zombie.Transform.position, main.Transform.position);
-                if (dist > meleeRange) continue;
+                // Find the closest human to this zombie
+                Player target = null;
+                float closestDist = float.MaxValue;
+                var zombiePos = zombie.Transform.position;
+                for (int i = 0; i < humans.Count; i++)
+                {
+                    var d = Vector3.Distance(zombiePos, humans[i].Transform.position);
+                    if (d < closestDist) { closestDist = d; target = humans[i]; }
+                }
+                if (target == null) continue;
 
-                float now = Time.time;
-                if (_nextAttack.TryGetValue(zombie, out float next) && now < next) continue;
-                _nextAttack[zombie] = now + meleeCooldown;
+                var targetPos = target.Transform.position;
 
-                Plugin.Log.LogInfo($"[RoamingZombies] Melee hit ({dist:F1}m) — {meleeDamage} dmg");
-                ApplyMeleeDamage(zombie, main, meleeDamage);
+                // Pursue when 4–40m: face target + nav toward them
+                if (closestDist >= PursuitMinRange && closestDist <= PursuitMaxRange)
+                    DriveMeleePursuit(zombie, targetPos);
+
+                // Swing when within melee range
+                if (closestDist < MeleeRange)
+                    TriggerMeleeSwing(zombie, targetPos);
             }
         }
 
-        private static void ApplyMeleeDamage(Player attacker, Player victim, float damage)
+        // Reused per-frame to avoid allocating a new list each Update()
+        private readonly List<Player> _humans = new List<Player>();
+
+        /// <summary>
+        /// Drives a melee zombie toward the player. Calls BotOwner.Steering.LookToPoint
+        /// (face player) + BotOwner.GoToPoint (nav toward player). Throttled to avoid
+        /// thrashing the NavMesh each frame. Pistol zombies (no KnifeController) pursue
+        /// natively via EFT's standard shoot-AI, so we skip them.
+        /// </summary>
+        private void DriveMeleePursuit(Player zombie, Vector3 playerPos)
         {
-            try
-            {
-                if (!EnsureReflection(victim)) return;
-
-                var damageInfo = Activator.CreateInstance(_damageInfoType);
-                _fiDamage?.SetValue(damageInfo, damage);
-                _fiDamageType?.SetValue(damageInfo, _meleeEnumValue);
-
-                if (_fiPlayer != null && _fiPlayer.FieldType.IsInstanceOfType(attacker))
-                    _fiPlayer.SetValue(damageInfo, attacker);
-
-                if (_fiDirection != null)
-                    _fiDirection.SetValue(damageInfo, (victim.Transform.position - attacker.Transform.position).normalized);
-
-                var bodyPart = BodyParts[UnityEngine.Random.Range(0, BodyParts.Length)];
-                _applyDamageMethod.Invoke(victim.ActiveHealthController, new[] { (object)bodyPart, damage, damageInfo });
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[RoamingZombies] ApplyMeleeDamage failed: {ex.Message}");
-            }
-        }
-
-        private static bool EnsureReflection(Player victim)
-        {
-            if (_reflectionReady) return _applyDamageMethod != null;
-            _reflectionReady = true;
+            if (_nextRepath.TryGetValue(zombie, out var next) && Time.time < next) return;
 
             try
             {
-                var hc = victim.ActiveHealthController;
-                if (hc == null) return false;
+                var botOwner = zombie.AIData?.BotOwner;
+                if (botOwner == null) return;
 
-                _applyDamageMethod = hc.GetType()
-                    .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .FirstOrDefault(m =>
-                        m.Name == "ApplyDamage" &&
-                        m.GetParameters().Length == 3 &&
-                        m.GetParameters()[0].ParameterType == typeof(EBodyPart));
+                ResolveReflection(botOwner);
 
-                if (_applyDamageMethod == null) return false;
+                // Melee only — pistol zombies have no KnifeController
+                var wm = _weaponManagerProp?.GetValue(botOwner);
+                var melee = _meleeDataProp?.GetValue(wm);
+                var knifeCtrl = _knifeControllerProp?.GetValue(melee);
+                if (knifeCtrl == null) return;
 
-                _damageInfoType = _applyDamageMethod.GetParameters()[2].ParameterType;
-                var flags     = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                var allFields = _damageInfoType.GetFields(flags);
+                _nextRepath[zombie] = Time.time + PursuitRepathEvery;
 
-                _fiDamage = allFields.FirstOrDefault(fi =>
-                    fi.FieldType == typeof(float) &&
-                    fi.Name.IndexOf("Damage", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                    fi.Name.IndexOf("Type",   StringComparison.OrdinalIgnoreCase) < 0);
-
-                _fiDamageType = allFields.FirstOrDefault(fi =>
-                    fi.FieldType.IsEnum &&
-                    fi.FieldType.Name.IndexOf("DamageType", StringComparison.OrdinalIgnoreCase) >= 0);
-
-                _fiPlayer = allFields.FirstOrDefault(fi =>
-                    fi.FieldType.Name.IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0);
-
-                _fiDirection = allFields.FirstOrDefault(fi =>
-                    fi.FieldType == typeof(Vector3) &&
-                    fi.Name.IndexOf("Direction", StringComparison.OrdinalIgnoreCase) >= 0);
-
-                if (_fiDamageType != null)
-                    _meleeEnumValue = Enum.Parse(_fiDamageType.FieldType, "Melee", ignoreCase: true);
-
-                Plugin.Log.LogInfo("[RoamingZombies] Melee reflection ready");
-                return true;
+                FacePoint(botOwner, playerPos);
+                InvokeWithVector3(_goToPointMethod, botOwner, playerPos);
             }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[RoamingZombies] EnsureReflection failed: {ex.Message}");
-                return false;
-            }
+            catch { /* pursuit is best-effort */ }
         }
 
+        /// <summary>
+        /// Forces a knife swing on the zombie. The native combat layer returns the
+        /// oneMeleeAttack decision but nothing downstream acts on it; calling
+        /// MakeKnifeKick() directly triggers the swing animation + enables the
+        /// KnifeCollider for the hit-cast. Native damage pipeline handles the rest.
+        /// </summary>
+        private void TriggerMeleeSwing(Player zombie, Vector3 playerPos)
+        {
+            if (_nextSwing.TryGetValue(zombie, out var next) && Time.time < next) return;
+
+            try
+            {
+                var botOwner = zombie.AIData?.BotOwner;
+                if (botOwner == null) return;
+
+                ResolveReflection(botOwner);
+
+                var wm = _weaponManagerProp?.GetValue(botOwner);
+                var melee = _meleeDataProp?.GetValue(wm);
+                var knifeCtrl = _knifeControllerProp?.GetValue(melee);
+                if (knifeCtrl == null) return;  // pistol zombie — skip silently
+
+                // Lazy-resolve MakeKnifeKick on first melee zombie. We can't resolve this
+                // in ResolveReflection because the first zombie we see might be a pistol
+                // zombie (KnifeController is null), and we'd permanently cache a miss.
+                if (_makeKnifeKickMethod == null)
+                {
+                    var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                    _makeKnifeKickMethod = knifeCtrl.GetType().GetMethod("MakeKnifeKick", flags, null, Type.EmptyTypes, null);
+                    Plugin.Log.LogInfo($"[RoamingZombies] MakeKnifeKick resolved on first melee zombie: {_makeKnifeKickMethod != null}");
+                    if (_makeKnifeKickMethod == null) return;
+                }
+
+                _nextSwing[zombie] = Time.time + SwingCooldown;
+
+                // Face the player so the hit-cast actually reaches them
+                FacePoint(botOwner, playerPos);
+                _makeKnifeKickMethod.Invoke(knifeCtrl, null);
+            }
+            catch { /* swing is best-effort */ }
+        }
+
+        private static void FacePoint(object botOwner, Vector3 point)
+        {
+            if (_lookToPointMethod == null || _steeringProp == null) return;
+            try
+            {
+                var steering = _steeringProp.GetValue(botOwner);
+                if (steering != null)
+                    InvokeWithVector3(_lookToPointMethod, steering, point);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Calls a method whose first parameter is Vector3. Fills remaining parameters
+        /// with defaults so we work across minor signature variations between EFT versions.
+        /// </summary>
+        private static void InvokeWithVector3(MethodInfo method, object target, Vector3 point)
+        {
+            if (method == null || target == null) return;
+            var parms = method.GetParameters();
+            var args = new object[parms.Length];
+            args[0] = point;
+            for (int i = 1; i < parms.Length; i++)
+                args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : Default(parms[i].ParameterType);
+            method.Invoke(target, args);
+        }
+
+        private static object Default(Type t)
+        {
+            if (t == typeof(bool))  return false;
+            if (t == typeof(float)) return -1f;
+            if (t.IsValueType)      return Activator.CreateInstance(t);
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves the obfuscated EFT API surface on first use against any BotOwner type.
+        /// These are type-level reflection handles so one resolution works for every zombie.
+        /// Note: MakeKnifeKick is NOT resolved here because KnifeController is null for
+        /// pistol zombies (they never draw a knife). If the first zombie we see is a
+        /// pistol one we'd cache a miss. That's resolved lazily in TriggerMeleeSwing
+        /// from the first real melee zombie.
+        /// </summary>
+        private static void ResolveReflection(object botOwner)
+        {
+            if (_reflectionResolved) return;
+
+            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+            _weaponManagerProp = botOwner.GetType().GetProperty("WeaponManager", flags);
+            var wm = _weaponManagerProp?.GetValue(botOwner);
+            if (wm != null)
+            {
+                _meleeDataProp = wm.GetType().GetProperty("Melee", flags);
+                var melee = _meleeDataProp?.GetValue(wm);
+                _knifeControllerProp = melee?.GetType().GetProperty("KnifeController", flags);
+            }
+
+            _goToPointMethod = botOwner.GetType().GetMethods(flags)
+                .FirstOrDefault(m => m.Name == "GoToPoint"
+                                  && m.GetParameters().Length >= 1
+                                  && m.GetParameters()[0].ParameterType == typeof(Vector3));
+
+            _steeringProp = botOwner.GetType().GetProperty("Steering", flags);
+            var steering = _steeringProp?.GetValue(botOwner);
+            if (steering != null)
+            {
+                _lookToPointMethod = steering.GetType().GetMethods(flags)
+                    .FirstOrDefault(m => m.Name == "LookToPoint"
+                                      && m.GetParameters().Length >= 1
+                                      && m.GetParameters()[0].ParameterType == typeof(Vector3));
+            }
+
+            _reflectionResolved = true;
+            Plugin.Log.LogInfo(
+                $"[RoamingZombies] API resolved — WeaponManager={_weaponManagerProp != null} " +
+                $"Melee={_meleeDataProp != null} KnifeCtrl prop={_knifeControllerProp != null} " +
+                $"GoToPoint={_goToPointMethod != null} LookToPoint={_lookToPointMethod != null}");
+        }
+
+        /// <summary>
+        /// Infected bots have Role=infectedX but some code paths check Side. Force Side
+        /// to Savage so the bot treats everyone as hostile and doesn't side-filter PMCs.
+        /// </summary>
         private static void FixInfectedSide(Player player)
         {
             var info = player?.Profile?.Info;
@@ -211,26 +318,21 @@ namespace ZombieHorde.Client
                 if (prop?.CanWrite == true)
                 {
                     prop.SetValue(info, EPlayerSide.Savage);
-                    Plugin.Log.LogInfo("[RoamingZombies] Set infected Side via property");
                     return;
                 }
                 var field = info.GetType()
                     .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     .FirstOrDefault(fi => fi.FieldType == typeof(EPlayerSide));
-                if (field != null)
-                {
-                    field.SetValue(info, EPlayerSide.Savage);
-                    Plugin.Log.LogInfo($"[RoamingZombies] Set infected Side via field '{field.Name}'");
-                }
+                field?.SetValue(info, EPlayerSide.Savage);
             }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[RoamingZombies] FixInfectedSide failed: {ex.Message}");
-            }
+            catch { /* side fix is best-effort */ }
         }
 
         private void OnHordeSpawned()
         {
+            // Skip notification + audio on dedicated headless (no local player to see/hear)
+            if (_gameWorld?.MainPlayer == null) return;
+
             if (Plugin.EnableHordeNotification.Value)
             {
                 NotificationManagerClass.DisplayMessageNotification(
@@ -238,7 +340,8 @@ namespace ZombieHorde.Client
                     ENotificationDurationType.Long);
             }
 
-            if (Plugin.EnableHordeAudio.Value && _hordeClip != null) PlayClip(_hordeClip);
+            if (Plugin.EnableHordeAudio.Value && _hordeClip != null)
+                PlayClip(_hordeClip);
         }
 
         private void PlayClip(AudioClip clip)
@@ -261,7 +364,7 @@ namespace ZombieHorde.Client
                 var candidate = Path.Combine(pluginDir, $"horde_alert.{ext}");
                 if (File.Exists(candidate)) { audioPath = candidate; break; }
             }
-            if (audioPath == null) { Plugin.Log.LogInfo("[RoamingZombies] No horde_alert audio found — sound disabled"); return; }
+            if (audioPath == null) return;
             StartCoroutine(LoadAudioCoroutine(audioPath));
         }
 
@@ -279,7 +382,6 @@ namespace ZombieHorde.Client
                     yield break;
                 }
                 _hordeClip = DownloadHandlerAudioClip.GetContent(request);
-                Plugin.Log.LogInfo($"[RoamingZombies] Loaded horde alert: {filePath}");
             }
         }
 

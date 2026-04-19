@@ -18,7 +18,7 @@ public record ZombieHordeMetadata : AbstractModMetadata, IModWebMetadata
     public override string Name { get; init; } = "Roaming Zombies";
     public override string Author { get; init; } = "DrBraun";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.1.1");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.2.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
@@ -101,15 +101,16 @@ public class ZombieSpawnService(
 
             foreach (var zombieType in ZombieTypes)
             {
-                var count = randomUtil.GetInt(_config.HordeSize.Min, _config.HordeSize.Max + 1);
-
+                // Melee zombies (BotDifficulty.normal → EZombieMode.Fast → knife).
+                // Full hordeSize count.
+                var meleeCount = randomUtil.GetInt(_config.HordeSize.Min, _config.HordeSize.Max + 1);
                 location.Base.BossLocationSpawn.Add(new BossLocationSpawn
                 {
                     BossName             = zombieType,
                     BossChance           = 100,
                     BossDifficulty       = "normal",
                     BossEscortType       = zombieType,
-                    BossEscortAmount     = count.ToString(),
+                    BossEscortAmount     = meleeCount.ToString(),
                     BossEscortDifficulty = "normal",
                     BossZone             = zone,
                     Delay                = 0,
@@ -123,6 +124,35 @@ public class ZombieSpawnService(
                     TriggerId            = "",
                     TriggerName          = ""
                 });
+
+                // Pistol zombies (BotDifficulty.hard → EZombieMode.Shooting → Makarov).
+                // Smaller count for variety — these use shootFromPlace / attackMoving
+                // decisions which go through EFT's standard bot logic nodes and should
+                // attack natively without our ForceKnifeKick workaround.
+                var pistolCount = randomUtil.GetInt(_config.PistolHordeSize.Min, _config.PistolHordeSize.Max + 1);
+                if (pistolCount > 0)
+                {
+                    location.Base.BossLocationSpawn.Add(new BossLocationSpawn
+                    {
+                        BossName             = zombieType,
+                        BossChance           = 100,
+                        BossDifficulty       = "hard",
+                        BossEscortType       = zombieType,
+                        BossEscortAmount     = pistolCount.ToString(),
+                        BossEscortDifficulty = "hard",
+                        BossZone             = zone,
+                        Delay                = 0,
+                        DependKarma          = false,
+                        DependKarmaPVE       = false,
+                        ForceSpawn           = _config.AlwaysSpawn,
+                        IgnoreMaxBots        = _config.IgnoreMaxBots,
+                        SpawnMode            = null,
+                        Supports             = null!,
+                        Time                 = _config.SpawnDelaySeconds,
+                        TriggerId            = "",
+                        TriggerName          = ""
+                    });
+                }
             }
 
             totalMaps++;
@@ -185,6 +215,13 @@ public record ZombieHordeConfig
 {
     [JsonPropertyName("hordeSize")]
     public required HordeSizeConfig HordeSize { get; set; }
+
+    /// <summary>
+    /// Count of pistol (BotDifficulty.hard / EZombieMode.Shooting) zombies to spawn
+    /// per infected type, in addition to the melee (normal) zombies. Set min=max=0 to disable.
+    /// </summary>
+    [JsonPropertyName("pistolHordeSize")]
+    public HordeSizeConfig PistolHordeSize { get; set; } = new HordeSizeConfig { Min = 1, Max = 2 };
 
     [JsonPropertyName("spawnDelaySeconds")]
     public int SpawnDelaySeconds { get; set; }
