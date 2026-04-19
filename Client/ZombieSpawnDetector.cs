@@ -40,6 +40,10 @@ namespace ZombieHorde.Client
         private const float PursuitMinRange    = 4f;     // no pursuit when already in melee range
         private const float PursuitMaxRange    = 40f;    // stop pursuing beyond this
         private const float PursuitRepathEvery = 1.5f;   // per-zombie seconds between re-path calls
+        private const float ChestHeightOffset  = 1.4f;   // Player.Transform.position is at feet — offset up
+                                                         // to chest height so zombies face/swing at torso,
+                                                         // not at the ground. Without this, knife box-cast
+                                                         // angles down and hits only legs.
 
         private GameWorld _gameWorld;
         private bool      _hordeDetected;
@@ -141,7 +145,9 @@ namespace ZombieHorde.Client
                 if (closestDist >= PursuitMinRange && closestDist <= PursuitMaxRange)
                     DriveMeleePursuit(zombie, targetPos);
 
-                // Swing when within melee range
+                // Swing when within melee range. Pass feet position — TriggerMeleeSwing
+                // offsets upward internally for the face-aim so the hit box-cast reaches
+                // torso level instead of angling down into legs.
                 if (closestDist < MeleeRange)
                     TriggerMeleeSwing(zombie, targetPos);
             }
@@ -175,7 +181,10 @@ namespace ZombieHorde.Client
 
                 _nextRepath[zombie] = Time.time + PursuitRepathEvery;
 
-                FacePoint(botOwner, playerPos);
+                // Face the target at chest height (feet-level would angle the swing-cast down).
+                // But pathfind to feet level — NavMesh agents walk on the ground.
+                var aimPos = playerPos + Vector3.up * ChestHeightOffset;
+                FacePoint(botOwner, aimPos);
                 InvokeWithVector3(_goToPointMethod, botOwner, playerPos);
             }
             catch { /* pursuit is best-effort */ }
@@ -216,8 +225,10 @@ namespace ZombieHorde.Client
 
                 _nextSwing[zombie] = Time.time + SwingCooldown;
 
-                // Face the player so the hit-cast actually reaches them
-                FacePoint(botOwner, playerPos);
+                // Face the target at chest height — KnifeCollider box-cast starts from
+                // WeaponRoot (waist-ish) and extends in LookDirection. Aim at torso, not feet.
+                var aimPos = playerPos + Vector3.up * ChestHeightOffset;
+                FacePoint(botOwner, aimPos);
                 _makeKnifeKickMethod.Invoke(knifeCtrl, null);
             }
             catch { /* swing is best-effort */ }
