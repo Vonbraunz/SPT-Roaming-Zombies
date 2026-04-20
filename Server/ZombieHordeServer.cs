@@ -18,7 +18,7 @@ public record ZombieHordeMetadata : AbstractModMetadata, IModWebMetadata
     public override string Name { get; init; } = "Roaming Zombies";
     public override string Author { get; init; } = "DrBraun";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.2.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.2.1");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
@@ -99,47 +99,34 @@ public class ZombieSpawnService(
             if (!locationDict.TryGetValue(actualKey, out var location))
                 continue;
 
-            foreach (var zombieType in ZombieTypes)
-            {
-                // Melee zombies (BotDifficulty.normal → EZombieMode.Fast → knife).
-                // Full hordeSize count.
-                var meleeCount = randomUtil.GetInt(_config.HordeSize.Min, _config.HordeSize.Max + 1);
-                location.Base.BossLocationSpawn.Add(new BossLocationSpawn
-                {
-                    BossName             = zombieType,
-                    BossChance           = 100,
-                    BossDifficulty       = "normal",
-                    BossEscortType       = zombieType,
-                    BossEscortAmount     = meleeCount.ToString(),
-                    BossEscortDifficulty = "normal",
-                    BossZone             = zone,
-                    Delay                = 0,
-                    DependKarma          = false,
-                    DependKarmaPVE       = false,
-                    ForceSpawn           = _config.AlwaysSpawn,
-                    IgnoreMaxBots        = _config.IgnoreMaxBots,
-                    SpawnMode            = null,
-                    Supports             = null!,
-                    Time                 = _config.SpawnDelaySeconds,
-                    TriggerId            = "",
-                    TriggerName          = ""
-                });
+            // ─── WAVE LOGIC (tested + working in 1.2.1, disabled for release) ────────────
+            // Scaffolding for the v2.0 "rolling waves throughout the raid" feature is kept
+            // here so we can re-enable with a one-line change when 2.0 ships. With
+            // WaveCount = 1 the for loop degenerates to a single pass at SpawnDelaySeconds,
+            // matching pre-1.2.1 single-spawn behavior. Bump WaveCount to 5 to get
+            // 5 waves spaced WaveIntervalSeconds apart.
+            const int WaveCount           = 1;    // 1 = single spawn; >1 = wave-based
+            const int WaveIntervalSeconds = 60;   // seconds between consecutive waves
+            // ──────────────────────────────────────────────────────────────────────────────
 
-                // Pistol zombies (BotDifficulty.hard → EZombieMode.Shooting → Makarov).
-                // Smaller count for variety — these use shootFromPlace / attackMoving
-                // decisions which go through EFT's standard bot logic nodes and should
-                // attack natively without our ForceKnifeKick workaround.
-                var pistolCount = randomUtil.GetInt(_config.PistolHordeSize.Min, _config.PistolHordeSize.Max + 1);
-                if (pistolCount > 0)
+            for (int wave = 0; wave < WaveCount; wave++)
+            {
+                // First wave at SpawnDelaySeconds, each subsequent wave WaveInterval later.
+                var waveTime = _config.SpawnDelaySeconds + (wave * WaveIntervalSeconds);
+
+                foreach (var zombieType in ZombieTypes)
                 {
+                    // Melee zombies (BotDifficulty.normal → EZombieMode.Fast → knife).
+                    // Full hordeSize count.
+                    var meleeCount = randomUtil.GetInt(_config.HordeSize.Min, _config.HordeSize.Max + 1);
                     location.Base.BossLocationSpawn.Add(new BossLocationSpawn
                     {
                         BossName             = zombieType,
                         BossChance           = 100,
-                        BossDifficulty       = "hard",
+                        BossDifficulty       = "normal",
                         BossEscortType       = zombieType,
-                        BossEscortAmount     = pistolCount.ToString(),
-                        BossEscortDifficulty = "hard",
+                        BossEscortAmount     = meleeCount.ToString(),
+                        BossEscortDifficulty = "normal",
                         BossZone             = zone,
                         Delay                = 0,
                         DependKarma          = false,
@@ -148,10 +135,39 @@ public class ZombieSpawnService(
                         IgnoreMaxBots        = _config.IgnoreMaxBots,
                         SpawnMode            = null,
                         Supports             = null!,
-                        Time                 = _config.SpawnDelaySeconds,
+                        Time                 = waveTime,
                         TriggerId            = "",
                         TriggerName          = ""
                     });
+
+                    // Pistol zombies (BotDifficulty.hard → EZombieMode.Shooting → Makarov).
+                    // Smaller count for variety — these use shootFromPlace / attackMoving
+                    // decisions which go through EFT's standard bot logic nodes and should
+                    // attack natively without our ForceKnifeKick workaround.
+                    var pistolCount = randomUtil.GetInt(_config.PistolHordeSize.Min, _config.PistolHordeSize.Max + 1);
+                    if (pistolCount > 0)
+                    {
+                        location.Base.BossLocationSpawn.Add(new BossLocationSpawn
+                        {
+                            BossName             = zombieType,
+                            BossChance           = 100,
+                            BossDifficulty       = "hard",
+                            BossEscortType       = zombieType,
+                            BossEscortAmount     = pistolCount.ToString(),
+                            BossEscortDifficulty = "hard",
+                            BossZone             = zone,
+                            Delay                = 0,
+                            DependKarma          = false,
+                            DependKarmaPVE       = false,
+                            ForceSpawn           = _config.AlwaysSpawn,
+                            IgnoreMaxBots        = _config.IgnoreMaxBots,
+                            SpawnMode            = null,
+                            Supports             = null!,
+                            Time                 = waveTime,
+                            TriggerId            = "",
+                            TriggerName          = ""
+                        });
+                    }
                 }
             }
 

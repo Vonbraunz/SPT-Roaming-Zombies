@@ -185,7 +185,7 @@ namespace ZombieHorde.Client
                 // But pathfind to feet level — NavMesh agents walk on the ground.
                 var aimPos = playerPos + Vector3.up * ChestHeightOffset;
                 FacePoint(botOwner, aimPos);
-                InvokeWithVector3(_goToPointMethod, botOwner, playerPos);
+                InvokeGoToPoint(_goToPointMethod, botOwner, playerPos);
             }
             catch { /* pursuit is best-effort */ }
         }
@@ -270,6 +270,35 @@ namespace ZombieHorde.Client
         }
 
         /// <summary>
+        /// Calls GoToPoint with pathfinding-friendly defaults. Unlike InvokeWithVector3
+        /// (bool → false), this defaults bools to TRUE — the multi-param overloads have
+        /// flags like "getUpWithCheck", "slowAtTheEnd", "changeNavMeshLink" where false
+        /// disables the very pathfinding features we need, reverting the zombie to
+        /// straight-line steering and the beelining-into-props bug.
+        /// </summary>
+        private static void InvokeGoToPoint(MethodInfo method, object target, Vector3 point)
+        {
+            if (method == null || target == null) return;
+            var parms = method.GetParameters();
+            var args = new object[parms.Length];
+            args[0] = point;
+            for (int i = 1; i < parms.Length; i++)
+            {
+                if (parms[i].HasDefaultValue)
+                    args[i] = parms[i].DefaultValue;
+                else if (parms[i].ParameterType == typeof(bool))
+                    args[i] = true;      // enable pathfinding-feature flags
+                else if (parms[i].ParameterType == typeof(float))
+                    args[i] = -1f;       // -1 = use bot config default (reach distance, etc.)
+                else if (parms[i].ParameterType.IsValueType)
+                    args[i] = Activator.CreateInstance(parms[i].ParameterType);
+                else
+                    args[i] = null;
+            }
+            method.Invoke(target, args);
+        }
+
+        /// <summary>
         /// Resolves the obfuscated EFT API surface on first use against any BotOwner type.
         /// These are type-level reflection handles so one resolution works for every zombie.
         /// Note: MakeKnifeKick is NOT resolved here because KnifeController is null for
@@ -292,10 +321,24 @@ namespace ZombieHorde.Client
                 _knifeControllerProp = melee?.GetType().GetProperty("KnifeController", flags);
             }
 
+            // Pick the RICHEST GoToPoint overload. BotOwner has several:
+            //   (Vector3)                                            <- direct steer, ignores NavMesh
+            //   (Vector3, bool, float, ...)                          <- pathfinding-capable
+            //   (Vector3, bool, float, bool, bool, bool, ...)        <- fully-featured
+            // FirstOrDefault was hitting the 1-param direct-steer variant, which walks zombies
+            // in a straight line until they hit a tree/container (v1.2.0 stuck-on-props bug).
+            // OrderByDescending(ParamCount) + First picks the pathfinding variant.
             _goToPointMethod = botOwner.GetType().GetMethods(flags)
-                .FirstOrDefault(m => m.Name == "GoToPoint"
-                                  && m.GetParameters().Length >= 1
-                                  && m.GetParameters()[0].ParameterType == typeof(Vector3));
+                .Where(m => m.Name == "GoToPoint"
+                         && m.GetParameters().Length >= 1
+                         && m.GetParameters()[0].ParameterType == typeof(Vector3))
+                .OrderByDescending(m => m.GetParameters().Length)
+                .FirstOrDefault();
+            if (_goToPointMethod != null)
+            {
+                var sig = string.Join(", ", _goToPointMethod.GetParameters().Select(p => p.ParameterType.Name));
+                Plugin.Log.LogInfo($"[RoamingZombies] GoToPoint overload resolved: ({sig})");
+            }
 
             _steeringProp = botOwner.GetType().GetProperty("Steering", flags);
             var steering = _steeringProp?.GetValue(botOwner);
