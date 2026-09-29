@@ -18,11 +18,15 @@
   </PropertyGroup>
 
   <!-- Directories -->
+  <!-- TarkovDir: point at a local SPT 4.1.x install (same EFT 0.16.9.5.40743 across 4.1.4–4.1.6).
+       Override on the command line:  dotnet build -p:TarkovDir=D:\path\to\SPT\ -->
   <PropertyGroup>
-    <TarkovDir Condition=" '$(TarkovDir)' == '' ">C:\SPT\ModTest\</TarkovDir>
+    <TarkovDir Condition=" '$(TarkovDir)' == '' ">D:\SPT 4.1.5\</TarkovDir>
     <TarkovPluginsSPTDir>$(TarkovDir)BepInEx\plugins\spt\</TarkovPluginsSPTDir>
     <TarkovManagedDir>$(TarkovDir)EscapeFromTarkov_Data\Managed\</TarkovManagedDir>
     <TarkovBepInExCoreDir>$(TarkovDir)BepInEx\core\</TarkovBepInExCoreDir>
+    <!-- SPT 4.1+ stores server mods under SPT_Runtime (was SPT\ in 4.0). -->
+    <TarkovServerModsDir>$(TarkovDir)SPT_Runtime\user\mods\</TarkovServerModsDir>
   </PropertyGroup>
 
   <!-- References -->
@@ -67,6 +71,7 @@
       <AudioFiles Include="$(ProjectDir)Audio\*.*" Condition="Exists('$(ProjectDir)Audio\')" />
       <ServerDLL Include="$(ProjectDir)..\Server\bin\$(Configuration)\ZombieHorde\ZombieHorde.Server.dll" />
       <ServerConfig Include="$(ProjectDir)..\Server\bin\$(Configuration)\ZombieHorde\config.json" />
+      <ServerWwwroot Include="$(ProjectDir)..\Server\bin\$(Configuration)\ZombieHorde\wwwroot\**\*" />
     </ItemGroup>
 
     <!-- ============ Create release ZIP for SPT Forge (always runs first) ============ -->
@@ -76,7 +81,11 @@
           DestinationFolder="$(ProjectDir)release\$(ModName)\BepInEx\plugins\$(ModName)\" />
 
     <Copy SourceFiles="@(ServerDLL);@(ServerConfig)"
-          DestinationFolder="$(ProjectDir)release\$(ModName)\SPT\user\mods\$(ModName)\" />
+          DestinationFolder="$(ProjectDir)release\$(ModName)\SPT_Runtime\user\mods\$(ModName)\" />
+
+    <Copy SourceFiles="@(ServerWwwroot)"
+          DestinationFolder="$(ProjectDir)release\$(ModName)\SPT_Runtime\user\mods\$(ModName)\wwwroot\"
+          Condition="'@(ServerWwwroot)' != ''" />
 
     <ZipDirectory SourceDirectory="$(ProjectDir)release\$(ModName)\"
                   DestinationFile="$(ProjectDir)release\$(ModName).zip" />
@@ -89,7 +98,12 @@
           ContinueOnError="true" />
 
     <Copy SourceFiles="@(ServerDLL);@(ServerConfig)"
-          DestinationFolder="$(TarkovDir)SPT\user\mods\$(ModName)\"
+          DestinationFolder="$(TarkovServerModsDir)$(ModName)\"
+          ContinueOnError="true" />
+
+    <Copy SourceFiles="@(ServerWwwroot)"
+          DestinationFolder="$(TarkovServerModsDir)$(ModName)\wwwroot\"
+          Condition="'@(ServerWwwroot)' != ''"
           ContinueOnError="true" />
   </Target>
 

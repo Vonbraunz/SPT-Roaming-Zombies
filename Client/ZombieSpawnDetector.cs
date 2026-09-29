@@ -389,7 +389,8 @@ namespace ZombieHorde.Client
 
             if (Plugin.EnableHordeNotification.Value)
             {
-                NotificationManagerClass.DisplayMessageNotification(
+                // SPT 4.1 deobfuscation renamed NotificationManagerClass → NotificationManager
+                NotificationManager.DisplayMessageNotification(
                     "The dead are rising... zombies have been spotted nearby.",
                     ENotificationDurationType.Long);
             }

@@ -1,4 +1,5 @@
 {
+  "enabled": true,
   "hordeSize": {
     "min": 2,
     "max": 4
@@ -9,6 +10,7 @@
   },
   "ignoreMaxBots": true,
   "alwaysSpawn": false,
+  "spawnChanceMultiplier": 1.0,
   "spawnDelaySeconds": 120,
   "spawnChance": {
     "bigmap": 70,

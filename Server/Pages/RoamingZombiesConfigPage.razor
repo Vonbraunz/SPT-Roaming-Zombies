@@ -1,0 +1,214 @@
+@namespace ZombieHorde.Pages
+@using Microsoft.AspNetCore.Authorization
+@using MudBlazor
+@using SPTarkov.Server.Core.Helpers.Server
+@using SPTarkov.Server.Core.Utils
+@using SPTarkov.Server.Web.Layout
+@using System.Reflection
+@attribute [Authorize]
+@layout BaseMudBlazorLayout
+@inject ZombieHordeConfig Config
+@inject ZombieSpawnService SpawnService
+@inject ModHelper ModHelper
+@inject JsonUtil JsonUtil
+@inject FileUtil FileUtil
+@inject ISnackbar Snackbar
+
+@page "/roaming-zombies"
+
+<style>
+    .rz-main {
+        margin-left: 30px;
+        margin-right: 30px;
+    }
+    .rz-title {
+        padding: 30px 30px 0;
+        margin-bottom: 0;
+    }
+    .rz-subtitle {
+        /* Top kept light so it doesn't stack with title's 30px */
+        padding: 8px 30px 8px;
+        margin-bottom: 1rem;
+    }
+</style>
+
+<div class="rz-main">
+    <MudText Typo="Typo.h4" Class="rz-title">Roaming Zombies</MudText>
+    <MudText Typo="Typo.body2" Class="rz-subtitle mud-text-secondary">
+        All <code>config.json</code> fields. Infected hordes only — PMC / Scav / boss chances stay in ABPS (or vanilla).
+    </MudText>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="2">
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h6">General</MudText>
+            <MudSwitch @bind-Value="_enabled" Label="enabled — master toggle for zombie spawns" Color="Color.Primary" />
+            <MudSwitch @bind-Value="_alwaysSpawn" Label="alwaysSpawn — guarantee horde on every map (ignores spawnChance)" Color="Color.Secondary" />
+            <MudSwitch @bind-Value="_ignoreMaxBots" Label="ignoreMaxBots — bypass map bot cap" Color="Color.Secondary" />
+            <MudNumericField @bind-Value="_spawnChanceMultiplier" Label="spawnChanceMultiplier" HelperText="Scales every map chance (0–10). Result clamped to 0–100." Min="0" Max="10" Step="0.1" Variant="Variant.Outlined" />
+            <MudNumericField @bind-Value="_spawnDelaySeconds" Label="spawnDelaySeconds" HelperText="Seconds after raid start before the horde appears." Min="0" Max="3600" Variant="Variant.Outlined" />
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="2">
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h6">hordeSize (melee per infected type)</MudText>
+            <MudStack Row="true" Spacing="2">
+                <MudNumericField @bind-Value="_meleeMin" Label="min" Min="0" Max="50" Variant="Variant.Outlined" />
+                <MudNumericField @bind-Value="_meleeMax" Label="max" Min="0" Max="50" Variant="Variant.Outlined" />
+            </MudStack>
+
+            <MudText Typo="Typo.h6">pistolHordeSize (pistol per infected type)</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">Set both to 0 for melee-only hordes.</MudText>
+            <MudStack Row="true" Spacing="2">
+                <MudNumericField @bind-Value="_pistolMin" Label="min" Min="0" Max="50" Variant="Variant.Outlined" />
+                <MudNumericField @bind-Value="_pistolMax" Label="max" Min="0" Max="50" Variant="Variant.Outlined" />
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="2">
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h6">spawnChance (per map, 0–100)</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                Rolled server-side unless alwaysSpawn is on. 0 disables that map. Effective chance = spawnChance × spawnChanceMultiplier.
+            </MudText>
+
+            <MudTable Items="_mapChances" Dense="true" Hover="true" Breakpoint="Breakpoint.None">
+                <HeaderContent>
+                    <MudTh>Map</MudTh>
+                    <MudTh>Key</MudTh>
+                    <MudTh Style="width: 8rem;">Chance %</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Map">@context.DisplayName</MudTd>
+                    <MudTd DataLabel="Key"><code>@context.Key</code></MudTd>
+                    <MudTd DataLabel="Chance">
+                        <MudNumericField @bind-Value="context.Chance" Min="0" Max="100" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="2">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" Disabled="_busy">Save &amp; re-inject</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="PullFromConfig" Disabled="_busy">Reload from disk/runtime</MudButton>
+            <MudButton Variant="Variant.Text" Color="Color.Default" Href="/configs">JSON Config Editor</MudButton>
+        </MudStack>
+        @if (!string.IsNullOrEmpty(_status))
+        {
+            <MudAlert Class="mt-3" Severity="Severity.Info" Dense="true">@_status</MudAlert>
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private static readonly (string Key, string DisplayName)[] MapLabels =
+    [
+        ("bigmap", "Customs"),
+        ("factory4_night", "Factory (Night)"),
+        ("interchange", "Interchange"),
+        ("laboratory", "Labs"),
+        ("lighthouse", "Lighthouse"),
+        ("rezervbase", "Reserve"),
+        ("sandbox", "Ground Zero"),
+        ("sandbox_high", "Ground Zero (High)"),
+        ("shoreline", "Shoreline"),
+        ("tarkovstreets", "Streets"),
+        ("woods", "Woods"),
+        ("labyrinth", "Labyrinth")
+    ];
+
+    private bool _enabled;
+    private bool _alwaysSpawn;
+    private bool _ignoreMaxBots;
+    private double _spawnChanceMultiplier = 1.0;
+    private int _spawnDelaySeconds = 120;
+    private int _meleeMin = 2;
+    private int _meleeMax = 4;
+    private int _pistolMin = 1;
+    private int _pistolMax = 2;
+    private List<MapChanceRow> _mapChances = [];
+    private bool _busy;
+    private string? _status;
+
+    protected override void OnInitialized() => PullFromConfig();
+
+    private void PullFromConfig()
+    {
+        _enabled = Config.Enabled;
+        _alwaysSpawn = Config.AlwaysSpawn;
+        _ignoreMaxBots = Config.IgnoreMaxBots;
+        _spawnChanceMultiplier = Config.SpawnChanceMultiplier;
+        _spawnDelaySeconds = Config.SpawnDelaySeconds;
+        _meleeMin = Config.HordeSize.Min;
+        _meleeMax = Config.HordeSize.Max;
+        _pistolMin = Config.PistolHordeSize.Min;
+        _pistolMax = Config.PistolHordeSize.Max;
+
+        _mapChances = MapLabels.Select(m => new MapChanceRow
+        {
+            Key = m.Key,
+            DisplayName = m.DisplayName,
+            Chance = Config.SpawnChance.TryGetValue(m.Key, out var chance) ? chance : 0
+        }).ToList();
+
+        // Keep any extra keys that might exist in config.json but aren't in MapLabels.
+        foreach (var (key, chance) in Config.SpawnChance)
+        {
+            if (_mapChances.Any(r => r.Key == key))
+                continue;
+            _mapChances.Add(new MapChanceRow { Key = key, DisplayName = key, Chance = chance });
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _status = null;
+        try
+        {
+            if (_meleeMax < _meleeMin) _meleeMax = _meleeMin;
+            if (_pistolMax < _pistolMin) _pistolMax = _pistolMin;
+
+            Config.Enabled = _enabled;
+            Config.AlwaysSpawn = _alwaysSpawn;
+            Config.IgnoreMaxBots = _ignoreMaxBots;
+            Config.SpawnChanceMultiplier = Math.Clamp(_spawnChanceMultiplier, 0, 10);
+            Config.SpawnDelaySeconds = Math.Max(0, _spawnDelaySeconds);
+            Config.HordeSize = new HordeSizeConfig { Min = _meleeMin, Max = _meleeMax };
+            Config.PistolHordeSize = new HordeSizeConfig { Min = _pistolMin, Max = _pistolMax };
+            Config.SpawnChance = _mapChances.ToDictionary(
+                r => r.Key,
+                r => Math.Clamp(r.Chance, 0, 100));
+
+            var modPath = ModHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
+            var path = Path.Combine(modPath, "config.json");
+            var json = JsonUtil.Serialize(Config, true) ?? "{}";
+            await FileUtil.WriteFileAsync(path, json);
+
+            SpawnService.InjectSpawns();
+            _status = Config.Enabled
+                ? "Saved all config.json fields. Infected spawn tables re-injected."
+                : "Saved. Zombie spawns disabled and cleared.";
+            Snackbar.Add(_status, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _status = "Save failed: " + ex.Message;
+            Snackbar.Add(_status, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class MapChanceRow
+    {
+        public string Key { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public int Chance { get; set; }
+    }
+}
